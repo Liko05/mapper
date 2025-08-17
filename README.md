@@ -19,7 +19,7 @@ Run all tests using:
 
 ## Requirements
 
-- Python 3.8 or higher
+- Python 3.9 or higher
 
 ## Project Structure
 
