@@ -1,7 +1,21 @@
+import json
 import unittest
-from main import prepare_lines, create_attribute, parse_group, convert_to_map, BASIC_INFO, END_OF_BASIC_INFO
+from main import prepare_lines, create_attribute, parse_group, convert_to_map, BASIC_INFO, END_OF_BASIC_INFO, load_file
+
 
 class TestParser(unittest.TestCase):
+
+    def test_infineon_example_csv(self):
+        test_file_path = "tests/test-data/infineon-example.csv"
+
+        groups = load_file(test_file_path)
+        result = convert_to_map(groups)
+
+        self.assertIn(BASIC_INFO, result)
+
+        with open("infineon_test_result.json", "w") as file:
+            json.dump(result, file, indent=4, ensure_ascii=False)
+
     def test_prepare_lines(self):
         lines = [
             "line1",

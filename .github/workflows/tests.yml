@@ -25,3 +25,11 @@ jobs:
       - name: Run tests
         run: |
           python -m unittest discover tests
+      - name: Save test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: |
+            infineon_test_result.json
+            result.json
