@@ -1,4 +1,4 @@
-import sys, json
+import sys, json, argparse
 
 
 BASIC_INFO = "Basic information"
@@ -39,7 +39,7 @@ def create_attribute(name: str, value: str):
     }
 
 # Parse a group of lines into a name, attributes, and whether basic info is finished
-def parse_group(group: list[str], finished_basic_info):
+def parse_group(group: list[str], finished_basic_info, delimiter: str):
     finished = finished_basic_info
     attributes = []
     group_name = None if finished else BASIC_INFO
@@ -50,16 +50,16 @@ def parse_group(group: list[str], finished_basic_info):
                 finished = True
         else:
             if group_name is None:
-                if ';' not in line:
+                if delimiter not in line:
                     group_name = line.strip()
                 else:
-                    name, _ = line.split(";", 1)
+                    name, _ = line.split(delimiter, 1)
                     if '.' in name:
                         group_name = name.split('.')[0].strip()
                     else:
                         group_name = name.strip()
 
-        content = line.split(";")
+        content = line.split(delimiter)
         if len(content) < 2:
             continue
         attributes.append(create_attribute(content[0], content[1]))
@@ -67,7 +67,7 @@ def parse_group(group: list[str], finished_basic_info):
     return group_name, attributes, finished
 
 # Convert the list of groups into a dictionary mapping group names to their attributes
-def convert_to_map(groups: list[list[str]]):
+def convert_to_map(groups: list[list[str]], delimiter: str):
     finished_basic_info = False
     result = {}
 
@@ -75,7 +75,7 @@ def convert_to_map(groups: list[list[str]]):
         if len(group) < 2 and finished_basic_info:
             continue
 
-        key, attributes, finished = parse_group(group, finished_basic_info)
+        key, attributes, finished = parse_group(group, finished_basic_info, delimiter)
         finished_basic_info = finished
         if key in result:
             result[key].extend(attributes)
@@ -85,12 +85,22 @@ def convert_to_map(groups: list[list[str]]):
 
 
 if __name__ == '__main__':
-    if len(sys.argv) != 2:
-        print("Only the path to file is allowed")
+
+    parser = argparse.ArgumentParser(description='Process a file with customizable delimiter')
+    parser.add_argument('file_path', help='Path to the file to process')
+    parser.add_argument('-d', '--delimiter', default=';', help='Delimiter to use (default: ;)')
+
+    args = parser.parse_args()
+    file = args.file_path
+    delimiter = args.delimiter
+
+    if file is None:
+        print("Please provide a file path.")
         exit(1)
 
+
     print("Processing file:", sys.argv[1])
-    final_result = convert_to_map(load_file(sys.argv[1]))
+    final_result = convert_to_map(load_file(file), delimiter)
     print("Processing completed.")
     print(json.dumps(final_result, indent=4, ensure_ascii=False))
     with open("result.json", "w") as file:
