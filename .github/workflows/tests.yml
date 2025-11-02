@@ -24,10 +24,25 @@ jobs:
 
       - name: Run tests
         run: |
-          python -m unittest discover tests
+          python -m unittest discover -v tests
+
+      - name: Generate JSON results from test data
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import subprocess, sys
+          files = [str(p) for p in Path('tests/test-data').rglob('*.csv')]
+          if files:
+              subprocess.check_call([sys.executable, 'main.py', *files, '-d', ';'])
+          else:
+              print('No CSV files found under tests/test-data')
+          PY
+
       - name: Save test results
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: tests-results
-          path: "*_result.json"
+          path: |
+            tests/test-data/**/*.json
+            *_result.json

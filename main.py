@@ -1,19 +1,25 @@
-import sys, json, argparse
+import json, argparse
+from pathlib import Path
+import logging
+from typing import Optional, Set
 
 
 BASIC_INFO = "Basic information"
 END_OF_BASIC_INFO = "JavaCard support version"
 
+logger = logging.getLogger(__name__)
+
 def load_file(path: str):
     try:
+        logger.info(f"Loading file: {path}")
         with open(path, 'r') as file:
             content = file.read()
         return prepare_lines(content.splitlines())
 
     except FileNotFoundError:
-        print(f"File not found: {path}")
+        logger.error(f"File not found: {path}")
     except Exception as e:
-        print(f"An error occurred: {e}")
+        logger.exception(f"An error occurred while reading {path}: {e}")
 
 # Prepare lines by splitting them into groups based on empty lines
 def prepare_lines(lines: list[str]) -> list[list[str]]:
@@ -35,7 +41,7 @@ def prepare_lines(lines: list[str]) -> list[list[str]]:
 def create_attribute(name: str, value: str):
     return {
         "name": name,
-        "c2": value
+        "value": value
     }
 
 # Parse a group of lines into a name, attributes, and whether basic info is finished
@@ -84,27 +90,84 @@ def convert_to_map(groups: list[list[str]], delimiter: str):
     return result
 
 
-if __name__ == '__main__':
+def load_exclusions(path: str) -> set[str]:
+    """Load exclusion property names from a file, ignoring empty and comment lines (#...)."""
+    excluded: set[str] = set()
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            for line in f:
+                trimmed = line.strip()
+                if not trimmed or trimmed.startswith('#'):
+                    continue
+                excluded.add(trimmed)
+        logger.info(f"Loaded {len(excluded)} excluded propertie(s) from {path}")
+    except FileNotFoundError:
+        logger.error(f"Exclusion file not found: {path}")
+    except Exception as e:
+        logger.exception(f"Failed to read exclusion file {path}: {e}")
+    return excluded
 
-    parser = argparse.ArgumentParser(description='Process a file with customizable delimiter')
-    parser.add_argument('file_path', help='Path to the file to process')
+
+def apply_exclusions(result: dict, excluded: set[str]) -> dict:
+    """Return a new result dict with attributes filtered by excluded property names."""
+    if not excluded:
+        return result
+    filtered: dict = {}
+    removed_count = 0
+    for group, attrs in result.items():
+        kept_attrs = []
+        for attr in attrs:
+            if attr.get('name') in excluded:
+                removed_count += 1
+                continue
+            kept_attrs.append(attr)
+        filtered[group] = kept_attrs
+    logger.info(f"Excluded {removed_count} attribute(s) by name")
+    return filtered
+
+
+def process_files(file_paths: list[str], delimiter: str = ';', excluded_properties: Optional[Set[str]] = None) -> list[Path]:
+    """Process given files and write JSON outputs next to inputs.
+
+    Returns a list of written output Paths.
+    """
+    outputs: list[Path] = []
+    for file_path in file_paths:
+        logger.info(f"Processing file: {file_path}")
+        groups = load_file(file_path)
+        if groups is None:
+            logger.warning(f"Skipping {file_path} due to previous error.")
+            continue
+        final_result = convert_to_map(groups, delimiter)
+        if excluded_properties:
+            final_result = apply_exclusions(final_result, excluded_properties)
+        logger.info("Processing completed.")
+        out_path = Path(file_path).with_suffix('.json')
+        try:
+            with open(out_path, "w", encoding='utf-8') as f:
+                json.dump(final_result, f, indent=4, ensure_ascii=False)
+            logger.info(f"Result saved to {out_path}")
+            outputs.append(out_path)
+        except Exception as e:
+            logger.exception(f"Failed to write output for {file_path}: {e}")
+    return outputs
+
+
+if __name__ == '__main__':
+    logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(name)s: %(message)s')
+
+    parser = argparse.ArgumentParser(description='Process one or more files with customizable delimiter')
+    parser.add_argument('file_paths', nargs='+', help='Path(s) to the file(s) to process')
     parser.add_argument('-d', '--delimiter', default=';', help='Delimiter to use (default: ;)')
+    parser.add_argument('-x', '--exclude-file', default=None, help='Path to a file with property names to exclude')
 
     args = parser.parse_args()
-    file = args.file_path
+    files = args.file_paths
     delimiter = args.delimiter
 
-    if file is None:
-        print("Please provide a file path.")
+    if not files:
+        logger.error("Please provide at least one file path.")
         exit(1)
 
-
-    print("Processing file:", sys.argv[1])
-    final_result = convert_to_map(load_file(file), delimiter)
-    print("Processing completed.")
-    print(json.dumps(final_result, indent=4, ensure_ascii=False))
-    with open("result.json", "w") as file:
-        json.dump(final_result, file, indent=4, ensure_ascii=False)
-    print("Result saved to result.json")
-
-
+    excluded = load_exclusions(args.exclude_file) if args.exclude_file else None
+    process_files(files, delimiter, excluded_properties=excluded)
