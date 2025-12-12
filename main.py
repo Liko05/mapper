@@ -1,148 +1,89 @@
 import json, argparse
 from pathlib import Path
 import logging
+import shutil
 from typing import Optional, Set
-
-
-BASIC_INFO = "Basic information"
-END_OF_BASIC_INFO = "JavaCard support version"
+import parser_utils
+from jcres_parser import convert_to_map
+from tpm_parser import convert_to_map_tpm
+from jcperf_parser import convert_to_map_jcperf
+from jcaid_parser import convert_to_map_aid
 
 logger = logging.getLogger(__name__)
 
-def load_file(path: str):
-    try:
-        logger.info(f"Loading file: {path}")
-        with open(path, 'r') as file:
-            content = file.read()
-        return prepare_lines(content.splitlines())
 
-    except FileNotFoundError:
-        logger.error(f"File not found: {path}")
-    except Exception as e:
-        logger.exception(f"An error occurred while reading {path}: {e}")
+def detect_parser_type(file_path: str) -> str:
+    """Detect which parser to use based on file path and content.
 
-# Prepare lines by splitting them into groups based on empty lines
-def prepare_lines(lines: list[str]) -> list[list[str]]:
-    result = []
-    current = []
-    for line in lines:
-        if line.strip() == "":
-            if current:
-                result.append(current)
-                current = []
-        else:
-            current.append(line.strip())
-    if current:
-        result.append(current)
-    return result
+    Returns:
+        str: 'tpm', 'javacard-performance', 'javacard-aid', or 'javacard-algsupport'
+    """
+    file_path_lower = file_path.lower()
+
+    # Check for TPM files
+    if 'tpm' in file_path_lower:
+        return 'tpm'
+
+    # Check for JavaCard AID support files
+    if '/aid/' in file_path_lower or '\\aid\\' in file_path_lower or 'aidsupport' in file_path_lower:
+        return 'javacard-aid'
+
+    # Check for JavaCard performance files
+    if 'performance' in file_path_lower:
+        return 'javacard-performance'
+
+    # Default to JavaCard algorithm support parser
+    return 'javacard-algsupport'
 
 
-# create an attribute dictionary from name and value
-def create_attribute(name: str, value: str):
-    return {
-        "name": name,
-        "value": value
-    }
+def process_files(file_paths: list[str], delimiter: str = ';', excluded_properties: Optional[Set[str]] = None,
+                  output_dir: Optional[Path] = None, source_base: Optional[Path] = None) -> list[Path]:
+    """Process given files and write JSON outputs.
 
-# Parse a group of lines into a name, attributes, and whether basic info is finished
-def parse_group(group: list[str], finished_basic_info, delimiter: str):
-    finished = finished_basic_info
-    attributes = []
-    group_name = None if finished else BASIC_INFO
-
-    for index, line in enumerate(group):
-        if not finished:
-            if END_OF_BASIC_INFO in line:
-                finished = True
-        else:
-            if group_name is None:
-                if delimiter not in line:
-                    group_name = line.strip()
-                else:
-                    name, _ = line.split(delimiter, 1)
-                    if '.' in name:
-                        group_name = name.split('.')[0].strip()
-                    else:
-                        group_name = name.strip()
-
-        content = line.split(delimiter)
-        if len(content) < 2:
-            continue
-        attributes.append(create_attribute(content[0], content[1]))
-
-    return group_name, attributes, finished
-
-# Convert the list of groups into a dictionary mapping group names to their attributes
-def convert_to_map(groups: list[list[str]], delimiter: str):
-    finished_basic_info = False
-    result = {}
-
-    for group in groups:
-        if len(group) < 2 and finished_basic_info:
-            continue
-
-        key, attributes, finished = parse_group(group, finished_basic_info, delimiter)
-        finished_basic_info = finished
-        if key in result:
-            result[key].extend(attributes)
-        else:
-            result[key] = attributes
-    return result
-
-
-def load_exclusions(path: str) -> set[str]:
-    """Load exclusion property names from a file, ignoring empty and comment lines (#...)."""
-    excluded: set[str] = set()
-    try:
-        with open(path, 'r', encoding='utf-8') as f:
-            for line in f:
-                trimmed = line.strip()
-                if not trimmed or trimmed.startswith('#'):
-                    continue
-                excluded.add(trimmed)
-        logger.info(f"Loaded {len(excluded)} excluded propertie(s) from {path}")
-    except FileNotFoundError:
-        logger.error(f"Exclusion file not found: {path}")
-    except Exception as e:
-        logger.exception(f"Failed to read exclusion file {path}: {e}")
-    return excluded
-
-
-def apply_exclusions(result: dict, excluded: set[str]) -> dict:
-    """Return a new result dict with attributes filtered by excluded property names."""
-    if not excluded:
-        return result
-    filtered: dict = {}
-    removed_count = 0
-    for group, attrs in result.items():
-        kept_attrs = []
-        for attr in attrs:
-            if attr.get('name') in excluded:
-                removed_count += 1
-                continue
-            kept_attrs.append(attr)
-        filtered[group] = kept_attrs
-    logger.info(f"Excluded {removed_count} attribute(s) by name")
-    return filtered
-
-
-def process_files(file_paths: list[str], delimiter: str = ';', excluded_properties: Optional[Set[str]] = None) -> list[Path]:
-    """Process given files and write JSON outputs next to inputs.
+    Args:
+        file_paths: List of file paths to process
+        delimiter: CSV delimiter character
+        excluded_properties: Set of property names to exclude from output
+        output_dir: If provided, write outputs to this directory preserving relative structure
+        source_base: Base path for calculating relative paths (used with output_dir)
 
     Returns a list of written output Paths.
     """
     outputs: list[Path] = []
     for file_path in file_paths:
         logger.info(f"Processing file: {file_path}")
-        groups = load_file(file_path)
+        groups = parser_utils.load_file(file_path)
         if groups is None:
             logger.warning(f"Skipping {file_path} due to previous error.")
             continue
-        final_result = convert_to_map(groups, delimiter)
+
+        parser_type = detect_parser_type(file_path)
+        logger.info(f"Detected parser type: {parser_type}")
+
+        if parser_type == 'tpm':
+            final_result = convert_to_map_tpm(groups, delimiter)
+        elif parser_type == 'javacard-performance':
+            final_result = convert_to_map_jcperf(groups, delimiter)
+        elif parser_type == 'javacard-aid':
+            final_result = convert_to_map_aid(groups, delimiter)
+        else:
+            final_result = convert_to_map(groups, delimiter)
+
         if excluded_properties:
-            final_result = apply_exclusions(final_result, excluded_properties)
+            final_result = parser_utils.apply_exclusions(final_result, excluded_properties)
         logger.info("Processing completed.")
-        out_path = Path(file_path).with_suffix('.json')
+
+        # Determine output path
+        if output_dir and source_base:
+            # Calculate relative path from source base and create in output dir
+            rel_path = Path(file_path).relative_to(source_base)
+            out_path = (output_dir / rel_path).with_suffix('.json')
+            # Ensure parent directories exist
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+        else:
+            # Default: write next to input file
+            out_path = Path(file_path).with_suffix('.json')
+
         try:
             with open(out_path, "w", encoding='utf-8') as f:
                 json.dump(final_result, f, indent=4, ensure_ascii=False)
@@ -153,21 +94,113 @@ def process_files(file_paths: list[str], delimiter: str = ';', excluded_properti
     return outputs
 
 
+def process_folder(folder_path: str, output_folder: Optional[str] = None,
+                   delimiter: str = ';', excluded_properties: Optional[Set[str]] = None) -> list[Path]:
+    """Process all CSV files in a folder and create mirrored structure with JSON outputs.
+
+    Args:
+        folder_path: Path to the source folder containing CSV files
+        output_folder: Path to output folder (default: folder name + '_parsed' in current directory)
+        delimiter: CSV delimiter character
+        excluded_properties: Set of property names to exclude from output
+
+    Returns a list of written output Paths.
+    """
+    source_path = Path(folder_path).resolve()
+
+    if not source_path.exists():
+        logger.error(f"Source folder does not exist: {source_path}")
+        return []
+
+    if not source_path.is_dir():
+        logger.error(f"Path is not a directory: {source_path}")
+        return []
+
+    # Determine output folder
+    if output_folder:
+        output_path = Path(output_folder).resolve()
+    else:
+        # Default: create folder with same name + '_parsed' in current working directory
+        output_path = Path.cwd() / f"{source_path.name}_parsed"
+
+    logger.info(f"Source folder: {source_path}")
+    logger.info(f"Output folder: {output_path}")
+
+    # Find all CSV files recursively
+    csv_files = list(source_path.rglob('*.csv'))
+
+    if not csv_files:
+        logger.warning(f"No CSV files found in {source_path}")
+        return []
+
+    logger.info(f"Found {len(csv_files)} CSV file(s) to process")
+
+    # Create output folder structure
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    # Process all files
+    file_paths = [str(f) for f in csv_files]
+    outputs = process_files(
+        file_paths,
+        delimiter=delimiter,
+        excluded_properties=excluded_properties,
+        output_dir=output_path,
+        source_base=source_path
+    )
+
+    logger.info(f"Processing complete. {len(outputs)} file(s) converted.")
+    return outputs
+
+
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(name)s: %(message)s')
 
-    parser = argparse.ArgumentParser(description='Process one or more files with customizable delimiter')
-    parser.add_argument('file_paths', nargs='+', help='Path(s) to the file(s) to process')
-    parser.add_argument('-d', '--delimiter', default=';', help='Delimiter to use (default: ;)')
-    parser.add_argument('-x', '--exclude-file', default=None, help='Path to a file with property names to exclude')
+    parser = argparse.ArgumentParser(
+        description='Parse CSV files from smartcard/TPM testing tools and convert to JSON format.',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog='''
+Examples:
+  # Process individual files (output saved next to input):
+  python main.py file1.csv file2.csv
+
+  # Process entire folder (creates mirrored structure in current directory):
+  python main.py --folder /path/to/csv/folder
+
+  # Process folder with custom output location:
+  python main.py --folder /path/to/csv/folder --output /path/to/output
+        '''
+    )
+
+    # Input options
+    parser.add_argument('file_paths', nargs='*', default=[],
+                        help='Path(s) to CSV file(s) to process')
+    parser.add_argument('-f', '--folder', dest='folder_path',
+                        help='Path to folder containing CSV files (processes recursively)')
+
+    # Output options
+    parser.add_argument('-o', '--output', dest='output_path',
+                        help='Output folder path (only used with --folder)')
+
+    # Processing options
+    parser.add_argument('-d', '--delimiter', default=';',
+                        help='Delimiter to use (default: ;)')
+    parser.add_argument('-x', '--exclude-file', default=None,
+                        help='Path to a file with property names to exclude')
 
     args = parser.parse_args()
-    files = args.file_paths
     delimiter = args.delimiter
+    excluded = parser_utils.load_exclusions(args.exclude_file) if args.exclude_file else None
 
-    if not files:
-        logger.error("Please provide at least one file path.")
-        exit(1)
-
-    excluded = load_exclusions(args.exclude_file) if args.exclude_file else None
-    process_files(files, delimiter, excluded_properties=excluded)
+    if args.folder_path:
+        # Folder mode: process all CSV files in folder
+        process_folder(
+            args.folder_path,
+            output_folder=args.output_path,
+            delimiter=delimiter,
+            excluded_properties=excluded
+        )
+    elif args.file_paths:
+        # File mode: process individual files
+        process_files(args.file_paths, delimiter, excluded_properties=excluded)
+    else:
+        parser.error("Please provide either file paths or use --folder option.")

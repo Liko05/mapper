@@ -54,10 +54,11 @@ class TestIntegrationParser(unittest.TestCase):
         import json
         data = json.loads(content)
         self.assertIsInstance(data, dict)
-        # Values should be lists of attributes (name/value dicts) when present
-        for k, v in list(data.items())[:3]:
-            self.assertIsInstance(v, list, f"Value for key {k} is not a list")
-            for item in v:
+        # Check that _type exists
+        self.assertIn('_type', data)
+        # Basic information should be a list of name/value dicts
+        if 'Basic information' in data:
+            for item in data['Basic information']:
                 self.assertIsInstance(item, dict)
                 self.assertIn('name', item)
                 self.assertIn('value', item)

@@ -38,11 +38,46 @@ jobs:
               print('No CSV files found under tests/test-data')
           PY
 
-      - name: Save test results
-        if: always()
+  parse-profiles:
+    runs-on: ubuntu-latest
+    needs: test  # Only run after tests pass
+
+    steps:
+      - name: Checkout parser repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+
+      - name: Clone jcalgtest_results repository
+        run: |
+          git clone --depth 1 --branch main \
+            https://github.com/crocs-muni/jcalgtest_results.git \
+            jcalgtest_results
+
+      - name: Run parser on profiles
+        run: |
+          python main.py --folder jcalgtest_results --output parsed-results
+
+      - name: Display parsed files summary
+        run: |
+          echo "=== Parsed Files Summary ==="
+          FILE_COUNT=$(find parsed-results -name "*.json" 2>/dev/null | wc -l)
+          echo "$FILE_COUNT JSON files created"
+          echo ""
+          echo "=== Directory Structure (first 30 dirs) ==="
+          find parsed-results -type d 2>/dev/null | head -30
+
+      - name: Upload parsed profiles as artifact
         uses: actions/upload-artifact@v4
         with:
-          name: tests-results
-          path: |
-            tests/test-data/**/*.json
-            *_result.json
+          name: parsed-jcalgtest-results
+          path: parsed-results/
+          retention-days: 90
+
