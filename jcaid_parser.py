@@ -1,3 +1,4 @@
+from typing import Optional
 from parser_utils import create_attribute
 
 BASIC_INFO = "Basic information"
@@ -10,7 +11,7 @@ SECTION_PACKAGE_AID = "PACKAGE AID;"
 SECTION_FULL_PACKAGE_AID = "FULL PACKAGE AID;"
 
 
-def is_section_marker(line: str) -> str | None:
+def is_section_marker(line: str) -> Optional[str]:
     """Check if a line is a section marker and return the section name.
 
     Returns the section name or None if not a section marker.
